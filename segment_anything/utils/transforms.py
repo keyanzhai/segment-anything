@@ -21,7 +21,7 @@ class ResizeLongestSide:
     """
 
     def __init__(self, target_length: int) -> None:
-        self.target_length = target_length
+        self.target_length = target_length # 1024
 
     def apply_image(self, image: np.ndarray) -> np.ndarray:
         """

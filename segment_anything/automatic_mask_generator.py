@@ -241,13 +241,17 @@ class SamAutomaticMaskGenerator:
 
         # Generate masks for this crop in batches
         data = MaskData()
+        # Process each batch of clicked points
         for (points,) in batch_iterator(self.points_per_batch, points_for_image):
+            # Process current batch
             batch_data = self._process_batch(points, cropped_im_size, crop_box, orig_size)
             data.cat(batch_data)
             del batch_data
+        
+        # After processing all the batches of clicked points for the current image, reset image for the predictor.
         self.predictor.reset_image()
 
-        # Remove duplicates within this crop.
+        # Remove duplicates within this crop. (nms)
         keep_by_nms = batched_nms(
             data["boxes"].float(),
             data["iou_preds"],
@@ -265,17 +269,19 @@ class SamAutomaticMaskGenerator:
 
     def _process_batch(
         self,
-        points: np.ndarray,
-        im_size: Tuple[int, ...],
-        crop_box: List[int],
-        orig_size: Tuple[int, ...],
+        points: np.ndarray, # A batch of prompt points
+        im_size: Tuple[int, ...], # Shape of the cropped image (by default, same as orginal image shape)
+        crop_box: List[int], # Cropped bounding box (by default, same as original image)
+        orig_size: Tuple[int, ...], # Original image shape
     ) -> MaskData:
         orig_h, orig_w = orig_size
 
         # Run model on this batch
-        transformed_points = self.predictor.transform.apply_coords(points, im_size)
-        in_points = torch.as_tensor(transformed_points, device=self.predictor.device)
-        in_labels = torch.ones(in_points.shape[0], dtype=torch.int, device=in_points.device)
+        transformed_points = self.predictor.transform.apply_coords(points, im_size) # batch_size x 2
+        in_points = torch.as_tensor(transformed_points, device=self.predictor.device) # batch_size x 2
+
+        # Labels: 0 indicates background, 1 indicates foreground
+        in_labels = torch.ones(in_points.shape[0], dtype=torch.int, device=in_points.device) # batch_size x 1
         masks, iou_preds, _ = self.predictor.predict_torch(
             in_points[:, None, :],
             in_labels[:, None],
@@ -285,7 +291,7 @@ class SamAutomaticMaskGenerator:
 
         # Serialize predictions and store in MaskData
         data = MaskData(
-            masks=masks.flatten(0, 1),
+            masks=masks.flatten(0, 1), # flattening along dimensions 0 and 1 
             iou_preds=iou_preds.flatten(0, 1),
             points=torch.as_tensor(points.repeat(masks.shape[1], axis=0)),
         )
@@ -300,6 +306,7 @@ class SamAutomaticMaskGenerator:
         data["stability_score"] = calculate_stability_score(
             data["masks"], self.predictor.model.mask_threshold, self.stability_score_offset
         )
+        # Filter by stability score
         if self.stability_score_thresh > 0.0:
             keep_mask = data["stability_score"] >= self.stability_score_thresh
             data.filter(keep_mask)
